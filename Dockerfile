@@ -17,7 +17,6 @@ RUN apk add --no-cache \
     busybox-suid \
     bash \
     ca-certificates \
-    dos2unix \
     tzdata
 
 # ── 设置时区 ─────────────────────────────────────────────────
@@ -49,8 +48,8 @@ COPY scripts/ /app/scripts/
 COPY monitor/api.py /app/monitor/api.py
 COPY web/ /app/web/
 
-# ── 转换行尾并设置可执行权限 ──────────────────────────────────
-RUN dos2unix /app/scripts/*.sh && chmod +x /app/scripts/*.sh
+# ── 脚本可执行权限 ───────────────────────────────────────────
+RUN chmod +x /app/scripts/*.sh
 
 # ── 暴露端口 ─────────────────────────────────────────────────
 # 1080: SOCKS5 代理入口

@@ -86,41 +86,13 @@ IFS="$OLD_IFS"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 号池统计: 共 ${KEY_COUNT} 个 Key，${KEY_SUCCESS} 个成功。"
 
 # ── 去重并解析为 JSON ──────────────────────────────────────
-# 先清除回车符和不可见字符，按 ip:port 去重，然后截取 MAX_PROXIES 条
-CLEAN_FILE="/tmp/proxies_clean.txt"
-tr -d '\r' < "$TEMP_ALL" | tr -cd '[:print:]\n' | sort -t: -k1,2 -u | grep -v '^$' | head -n "$MAX_PROXIES" > "$CLEAN_FILE"
-
-# 调试输出：显示清洗后的前 3 行
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] 调试: 清洗后数据样本（前3行）:"
-head -3 "$CLEAN_FILE" | while IFS= read -r line; do
-  echo "  >> $(echo "$line" | cut -c1-60)..."
-done
-
-# 使用 jq 安全构建 JSON 数组（避免手动拼接导致特殊字符问题）
-PROXIES_JSON="["
-FIRST=true
-while IFS=: read -r addr port user pass rest; do
-  # 跳过空行或无效行
-  [ -z "$addr" ] && continue
-  [ -z "$port" ] && continue
-
-  # 用 jq 安全构建单个 JSON 对象（自动转义特殊字符）
-  ITEM=$(jq -nc \
-    --arg a "$addr" \
-    --arg p "$port" \
-    --arg u "$user" \
-    --arg pw "$pass" \
-    --arg cc "$PROXY_COUNTRY" \
-    '{proxy_address: $a, port: ($p | tonumber), username: $u, password: $pw, country_code: $cc}' 2>/dev/null) || continue
-
-  if [ "$FIRST" = true ]; then
-    PROXIES_JSON="${PROXIES_JSON}${ITEM}"
-    FIRST=false
-  else
-    PROXIES_JSON="${PROXIES_JSON},${ITEM}"
-  fi
-done < "$CLEAN_FILE"
-PROXIES_JSON="${PROXIES_JSON}]"
+# 先清除回车符等控制字符，按 ip:port 去重，然后截取 MAX_PROXIES 条
+PROXIES_JSON=$(tr -d '\r' < "$TEMP_ALL" | sed 's/[[:cntrl:]]//g' | sort -t: -k1,2 -u | grep -v '^$' | head -n "$MAX_PROXIES" | awk -F: '{
+  # 清除字段中的残留控制字符
+  for (i=1; i<=NF; i++) gsub(/[^[:print:]]/, "", $i)
+  if ($1 != "" && $2 != "")
+    printf "{\"proxy_address\":\"%s\",\"port\":%s,\"username\":\"%s\",\"password\":\"%s\",\"country_code\":\"'"${PROXY_COUNTRY}"'\"}\n", $1, $2, $3, $4
+}' | jq -sc '.')
 
 PROXY_COUNT=$(echo "$PROXIES_JSON" | jq 'length')
 
