@@ -1,0 +1,25 @@
+services:
+  gost-proxy-pool:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gost-proxy-pool
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "1080:1080"   # SOCKS5 代理入口
+      - "8080:8080"   # 监控面板 & API
+    volumes:
+      # 持久化代理状态数据（可选）
+      - gost-data:/var/lib/gost
+      - gost-logs:/var/log
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  gost-data:
+  gost-logs:

@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gost 代理池监控面板</title>
+  <meta name="description" content="实时监控 Gost V3 动态代理池的运行状态、节点列表和健康情况">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    /* ── CSS 变量 & 重置 ─────────────────────────── */
+    :root {
+      --bg-base: #0a0e1a;
+      --bg-card: #0f1628;
+      --bg-card-hover: #141c35;
+      --bg-border: #1e2d50;
+      --accent-cyan: #00d4ff;
+      --accent-purple: #7c3aed;
+      --accent-green: #10b981;
+      --accent-orange: #f59e0b;
+      --accent-red: #ef4444;
+      --text-primary: #e2e8f0;
+      --text-secondary: #94a3b8;
+      --text-muted: #475569;
+      --glow-cyan: 0 0 20px rgba(0, 212, 255, 0.3);
+      --glow-green: 0 0 20px rgba(16, 185, 129, 0.3);
+      --glow-purple: 0 0 20px rgba(124, 58, 237, 0.3);
+      --radius: 12px;
+      --transition: 0.2s ease;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── 背景网格动效 ────────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── 顶部光晕 ────────────────────────────────── */
+    .top-glow {
+      position: fixed;
+      top: -200px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 800px;
+      height: 400px;
+      background: radial-gradient(ellipse, rgba(124,58,237,0.15) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── 主容器 ──────────────────────────────────── */
+    .container {
+      position: relative;
+      z-index: 1;
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0 24px 48px;
+    }
+
+    /* ── 导航栏 ──────────────────────────────────── */
+    .navbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 0;
+      border-bottom: 1px solid var(--bg-border);
+      margin-bottom: 32px;
+    }
+    .navbar-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand-icon {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+    .brand-title {
+      font-size: 18px;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .brand-sub {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .navbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 500;
+      border: 1px solid;
+      transition: var(--transition);
+    }
+    .status-badge.online {
+      color: var(--accent-green);
+      border-color: var(--accent-green);
+      background: rgba(16,185,129,0.08);
+      box-shadow: var(--glow-green);
+    }
+    .status-badge.offline {
+      color: var(--accent-red);
+      border-color: var(--accent-red);
+      background: rgba(239,68,68,0.08);
+    }
+    .status-badge .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: pulse-dot 2s infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.8); }
+    }
+    .btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid;
+      transition: var(--transition);
+      text-decoration: none;
+      font-family: 'Inter', sans-serif;
+    }
+    .btn-primary {
+      color: var(--accent-cyan);
+      border-color: var(--accent-cyan);
+      background: rgba(0,212,255,0.08);
+    }
+    .btn-primary:hover {
+      background: rgba(0,212,255,0.15);
+      box-shadow: var(--glow-cyan);
+    }
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .btn-danger {
+      color: var(--accent-orange);
+      border-color: var(--accent-orange);
+      background: rgba(245,158,11,0.08);
+    }
+    .btn-danger:hover {
+      background: rgba(245,158,11,0.15);
+    }
+    .spin { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── 统计卡片 ─────────────────────────────────── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--bg-border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      transition: var(--transition);
+      cursor: default;
+    }
+    .stat-card:hover {
+      border-color: var(--accent-cyan);
+      transform: translateY(-2px);
+      box-shadow: var(--glow-cyan);
+    }
+    .stat-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .stat-value {
+      font-size: 32px;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      line-height: 1;
+      margin-bottom: 6px;
+    }
+    .stat-value.cyan { color: var(--accent-cyan); }
+    .stat-value.green { color: var(--accent-green); }
+    .stat-value.purple { color: var(--accent-purple); }
+    .stat-value.orange { color: var(--accent-orange); }
+    .stat-sub {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    /* ── 代理节点表格 ─────────────────────────────── */
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .section-title {
+      font-size: 16px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .section-title span {
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 400;
+    }
+    .search-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .search-input {
+      background: var(--bg-card);
+      border: 1px solid var(--bg-border);
+      border-radius: 8px;
+      padding: 7px 14px;
+      font-size: 13px;
+      color: var(--text-primary);
+      outline: none;
+      transition: var(--transition);
+      width: 220px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .search-input::placeholder { color: var(--text-muted); }
+    .search-input:focus {
+      border-color: var(--accent-cyan);
+      box-shadow: var(--glow-cyan);
+    }
+    .table-card {
+      background: var(--bg-card);
+      border: 1px solid var(--bg-border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .table-wrap { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    thead {
+      background: rgba(0,212,255,0.04);
+      border-bottom: 1px solid var(--bg-border);
+    }
+    th {
+      padding: 12px 16px;
+      text-align: left;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    tbody tr {
+      border-bottom: 1px solid rgba(30,45,80,0.5);
+      transition: var(--transition);
+    }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: var(--bg-card-hover); }
+    td {
+      padding: 11px 16px;
+      color: var(--text-secondary);
+      font-family: 'JetBrains Mono', monospace;
+      white-space: nowrap;
+    }
+    td.host { color: var(--text-primary); font-weight: 500; }
+    .country-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      background: rgba(124,58,237,0.15);
+      border: 1px solid rgba(124,58,237,0.3);
+      border-radius: 4px;
+      color: #a78bfa;
+      font-size: 11px;
+      font-family: 'Inter', sans-serif;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+    .node-id {
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    /* ── 分页 ────────────────────────────────────── */
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 20px;
+      border-top: 1px solid var(--bg-border);
+    }
+    .pagination-info {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .pagination-btns {
+      display: flex;
+      gap: 6px;
+    }
+    .pg-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      border: 1px solid var(--bg-border);
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: var(--transition);
+      font-family: 'Inter', sans-serif;
+    }
+    .pg-btn:hover:not(:disabled) {
+      border-color: var(--accent-cyan);
+      color: var(--accent-cyan);
+    }
+    .pg-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    .pg-btn.active {
+      background: rgba(0,212,255,0.15);
+      border-color: var(--accent-cyan);
+      color: var(--accent-cyan);
+    }
+
+    /* ── 底部信息 ────────────────────────────────── */
+    .footer-info {
+      margin-top: 24px;
+      padding: 16px 20px;
+      background: var(--bg-card);
+      border: 1px solid var(--bg-border);
+      border-radius: var(--radius);
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+    }
+    .info-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .info-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .info-value {
+      font-size: 13px;
+      color: var(--text-primary);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* ── Toast 通知 ──────────────────────────────── */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 12px 20px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 500;
+      border: 1px solid;
+      transform: translateY(80px);
+      opacity: 0;
+      transition: all 0.3s ease;
+      z-index: 9999;
+      max-width: 320px;
+    }
+    .toast.show { transform: translateY(0); opacity: 1; }
+    .toast.success {
+      background: rgba(16,185,129,0.1);
+      border-color: var(--accent-green);
+      color: var(--accent-green);
+    }
+    .toast.error {
+      background: rgba(239,68,68,0.1);
+      border-color: var(--accent-red);
+      color: var(--accent-red);
+    }
+
+    /* ── 空状态 ──────────────────────────────────── */
+    .empty-state {
+      text-align: center;
+      padding: 48px 20px;
+      color: var(--text-muted);
+    }
+    .empty-state .empty-icon { font-size: 40px; margin-bottom: 12px; }
+    .empty-state p { font-size: 14px; }
+
+    /* ── 加载骨架 ─────────────────────────────────── */
+    .skeleton {
+      background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-card-hover) 50%, var(--bg-card) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: 4px;
+      height: 14px;
+    }
+    @keyframes shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    /* ── 响应式 ──────────────────────────────────── */
+    @media (max-width: 768px) {
+      .navbar { flex-direction: column; gap: 12px; align-items: flex-start; }
+      .section-header { flex-direction: column; gap: 12px; align-items: flex-start; }
+      .search-input { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="top-glow"></div>
+
+  <div class="container">
+    <!-- 导航栏 -->
+    <nav class="navbar">
+      <div class="navbar-brand">
+        <div class="brand-icon">🌐</div>
+        <div>
+          <div class="brand-title">Gost 代理池监控</div>
+          <div class="brand-sub">Dynamic Proxy Pool Dashboard</div>
+        </div>
+      </div>
+      <div class="navbar-actions">
+        <div class="status-badge offline" id="gost-status-badge">
+          <span class="dot"></span>
+          <span id="gost-status-text">连接中...</span>
+        </div>
+        <button class="btn btn-danger" id="btn-reload" onclick="triggerReload()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+          </svg>
+          热重载
+        </button>
+        <button class="btn btn-primary" id="btn-refresh" onclick="refreshAll()">
+          <svg id="refresh-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+          </svg>
+          刷新
+        </button>
+      </div>
+    </nav>
+
+    <!-- 统计卡片 -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">⚡ 代理节点总数</div>
+        <div class="stat-value cyan" id="stat-total">--</div>
+        <div class="stat-sub" id="stat-country">筛选国家: --</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">🟢 Gost 服务状态</div>
+        <div class="stat-value green" id="stat-gost">--</div>
+        <div class="stat-sub">SOCKS5 :1080</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">♻ 负载均衡策略</div>
+        <div class="stat-value purple">Random</div>
+        <div class="stat-sub">随机选择 · MaxFails: 3</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">🕐 最近更新时间</div>
+        <div class="stat-value orange" id="stat-updated" style="font-size:16px;margin-top:6px;">--</div>
+        <div class="stat-sub" id="stat-interval">刷新间隔: -- 分钟</div>
+      </div>
+    </div>
+
+    <!-- 代理节点表格 -->
+    <div class="section-header">
+      <div class="section-title">
+        代理节点列表
+        <span id="table-count">共 0 个节点</span>
+      </div>
+      <div class="search-box">
+        <input
+          class="search-input"
+          type="text"
+          id="search-input"
+          placeholder="搜索 IP / 端口..."
+          oninput="filterTable(this.value)"
+        >
+      </div>
+    </div>
+
+    <div class="table-card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>主机地址</th>
+              <th>端口</th>
+              <th>国家</th>
+              <th>用户名</th>
+            </tr>
+          </thead>
+          <tbody id="proxy-table-body">
+            <tr>
+              <td colspan="5">
+                <div class="empty-state">
+                  <div class="empty-icon">⏳</div>
+                  <p>正在加载代理节点...</p>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="pagination">
+        <span class="pagination-info" id="page-info">第 1 / 1 页</span>
+        <div class="pagination-btns" id="page-btns"></div>
+      </div>
+    </div>
+
+    <!-- 底部配置信息 -->
+    <div class="footer-info">
+      <div class="info-item">
+        <div class="info-label">SOCKS5 入口</div>
+        <div class="info-value" id="info-socks5">socks5://user:pass@host:1080</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">Gost PID</div>
+        <div class="info-value" id="info-pid">--</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">最大代理数配置</div>
+        <div class="info-value" id="info-max">--</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">监控面板版本</div>
+        <div class="info-value">v1.0.0 · Gost V3</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast 通知 -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ── 状态管理 ──────────────────────────────────
+    const state = {
+      proxies: [],
+      filteredProxies: [],
+      currentPage: 1,
+      pageSize: 15,
+      loading: false,
+      autoRefreshTimer: null,
+    };
+
+    // ── 工具函数 ──────────────────────────────────
+    function showToast(msg, type = 'success') {
+      const toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.className = `toast ${type} show`;
+      setTimeout(() => toast.classList.remove('show'), 3500);
+    }
+
+    function formatDateTime(isoStr) {
+      if (!isoStr) return '--';
+      try {
+        return new Date(isoStr).toLocaleString('zh-CN', {
+          month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit',
+          hour12: false,
+        });
+      } catch { return isoStr; }
+    }
+
+    function setRefreshIcon(spinning) {
+      const icon = document.getElementById('refresh-icon');
+      if (spinning) icon.classList.add('spin');
+      else icon.classList.remove('spin');
+      document.getElementById('btn-refresh').disabled = spinning;
+    }
+
+    // ── 拉取状态 ──────────────────────────────────
+    async function fetchStatus() {
+      try {
+        const res = await fetch('/api/status');
+        if (!res.ok) throw new Error('API 响应错误');
+        const data = await res.json();
+
+        // 更新 Gost 状态 badge
+        const badge = document.getElementById('gost-status-badge');
+        const text = document.getElementById('gost-status-text');
+        const statGost = document.getElementById('stat-gost');
+        if (data.service?.gost_running) {
+          badge.className = 'status-badge online';
+          text.textContent = '服务运行中';
+          statGost.textContent = '运行中';
+        } else {
+          badge.className = 'status-badge offline';
+          text.textContent = '服务停止';
+          statGost.textContent = '已停止';
+        }
+
+        // 统计卡片
+        document.getElementById('stat-total').textContent = data.proxy_pool?.count ?? '--';
+        document.getElementById('stat-country').textContent = `筛选国家: ${data.proxy_pool?.country ?? '--'}`;
+        document.getElementById('stat-updated').textContent = formatDateTime(data.proxy_pool?.updated_at);
+        document.getElementById('stat-interval').textContent = `刷新间隔: ${data.config?.refresh_interval_min ?? '--'} 分钟`;
+
+        // 底部信息
+        document.getElementById('info-pid').textContent = data.service?.gost_pid ?? '--';
+        document.getElementById('info-max').textContent = data.config?.max_proxies ?? '--';
+      } catch (e) {
+        const badge = document.getElementById('gost-status-badge');
+        badge.className = 'status-badge offline';
+        document.getElementById('gost-status-text').textContent = '连接失败';
+      }
+    }
+
+    // ── 拉取代理列表 ──────────────────────────────
+    async function fetchProxies() {
+      try {
+        const res = await fetch(`/api/proxies?page=1&page_size=500&mask=true`);
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        state.proxies = data.proxies || [];
+        state.filteredProxies = [...state.proxies];
+        state.currentPage = 1;
+        renderTable();
+        document.getElementById('table-count').textContent = `共 ${state.proxies.length} 个节点`;
+      } catch {
+        document.getElementById('proxy-table-body').innerHTML = `
+          <tr><td colspan="5">
+            <div class="empty-state">
+              <div class="empty-icon">⚠️</div>
+              <p>加载代理列表失败，请检查 API 服务。</p>
+            </div>
+          </td></tr>`;
+      }
+    }
+
+    // ── 渲染表格 ──────────────────────────────────
+    function renderTable() {
+      const tbody = document.getElementById('proxy-table-body');
+      const list = state.filteredProxies;
+      const total = list.length;
+
+      if (total === 0) {
+        tbody.innerHTML = `<tr><td colspan="5">
+          <div class="empty-state">
+            <div class="empty-icon">📭</div>
+            <p>暂无代理节点数据。</p>
+          </div>
+        </td></tr>`;
+        renderPagination(0);
+        return;
+      }
+
+      const start = (state.currentPage - 1) * state.pageSize;
+      const page = list.slice(start, start + state.pageSize);
+      const globalOffset = start;
+
+      tbody.innerHTML = page.map((p, i) => `
+        <tr>
+          <td class="node-id">${globalOffset + i + 1}</td>
+          <td class="host">${p.proxy_address || '--'}</td>
+          <td>${p.port || '--'}</td>
+          <td><span class="country-badge">${p.country_code || '--'}</span></td>
+          <td>${p.username || '--'}</td>
+        </tr>
+      `).join('');
+
+      renderPagination(total);
+      document.getElementById('page-info').textContent =
+        `第 ${state.currentPage} / ${Math.ceil(total / state.pageSize)} 页  ·  共 ${total} 条`;
+    }
+
+    function renderPagination(total) {
+      const pages = Math.ceil(total / state.pageSize);
+      const container = document.getElementById('page-btns');
+      const buttons = [];
+
+      buttons.push(`<button class="pg-btn" onclick="goPage(${state.currentPage - 1})" ${state.currentPage <= 1 ? 'disabled' : ''}>‹</button>`);
+
+      const range = visiblePages(state.currentPage, pages);
+      range.forEach(p => {
+        if (p === '...') {
+          buttons.push(`<span style="color:var(--text-muted);padding:0 4px">…</span>`);
+        } else {
+          buttons.push(`<button class="pg-btn ${p === state.currentPage ? 'active' : ''}" onclick="goPage(${p})">${p}</button>`);
+        }
+      });
+
+      buttons.push(`<button class="pg-btn" onclick="goPage(${state.currentPage + 1})" ${state.currentPage >= pages ? 'disabled' : ''}>›</button>`);
+      container.innerHTML = buttons.join('');
+    }
+
+    function visiblePages(current, total) {
+      if (total <= 7) return Array.from({length: total}, (_, i) => i + 1);
+      const pages = [];
+      if (current <= 4) {
+        pages.push(1,2,3,4,5,'...',total);
+      } else if (current >= total - 3) {
+        pages.push(1,'...',total-4,total-3,total-2,total-1,total);
+      } else {
+        pages.push(1,'...',current-1,current,current+1,'...',total);
+      }
+      return pages;
+    }
+
+    function goPage(page) {
+      const pages = Math.ceil(state.filteredProxies.length / state.pageSize);
+      if (page < 1 || page > pages) return;
+      state.currentPage = page;
+      renderTable();
+    }
+
+    // ── 搜索过滤 ──────────────────────────────────
+    function filterTable(query) {
+      const q = query.toLowerCase().trim();
+      if (!q) {
+        state.filteredProxies = [...state.proxies];
+      } else {
+        state.filteredProxies = state.proxies.filter(p =>
+          (p.proxy_address || '').toLowerCase().includes(q) ||
+          String(p.port || '').includes(q)
+        );
+      }
+      state.currentPage = 1;
+      renderTable();
+      document.getElementById('table-count').textContent = `共 ${state.filteredProxies.length} 个节点（已过滤）`;
+    }
+
+    // ── 全量刷新 ──────────────────────────────────
+    async function refreshAll() {
+      if (state.loading) return;
+      state.loading = true;
+      setRefreshIcon(true);
+      await Promise.all([fetchStatus(), fetchProxies()]);
+      state.loading = false;
+      setRefreshIcon(false);
+      showToast('数据已刷新 ✓');
+    }
+
+    // ── 手动热重载 ────────────────────────────────
+    async function triggerReload() {
+      const btn = document.getElementById('btn-reload');
+      btn.disabled = true;
+      btn.textContent = '重载中...';
+      try {
+        const res = await fetch('/api/reload', { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+          showToast('🔄 热重载成功，Gost 配置已更新！');
+          setTimeout(refreshAll, 2000);
+        } else {
+          showToast(`热重载失败：${data.detail || '未知错误'}`, 'error');
+        }
+      } catch {
+        showToast('热重载请求失败，请检查服务。', 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="23 4 23 10 17 10"></polyline>
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+        </svg> 热重载`;
+      }
+    }
+
+    // ── 自动刷新（30秒轮询） ─────────────────────
+    function startAutoRefresh() {
+      if (state.autoRefreshTimer) clearInterval(state.autoRefreshTimer);
+      state.autoRefreshTimer = setInterval(() => {
+        fetchStatus();
+        // 每 5 分钟刷新节点列表，状态每 30 秒刷
+        if (Date.now() % (5 * 60 * 1000) < 30000) fetchProxies();
+      }, 30000);
+    }
+
+    // ── 初始化 ────────────────────────────────────
+    async function init() {
+      await refreshAll();
+      startAutoRefresh();
+    }
+
+    init();
+  </script>
+</body>
+</html>

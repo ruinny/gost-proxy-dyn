@@ -1,0 +1,17 @@
+{
+    "build": {
+        "type": "dockerfile"
+    },
+    "ports": [
+        {
+            "port": 1080,
+            "type": "TCP",
+            "name": "SOCKS5 代理"
+        },
+        {
+            "port": 8080,
+            "type": "HTTP",
+            "name": "监控面板"
+        }
+    ]
+}
