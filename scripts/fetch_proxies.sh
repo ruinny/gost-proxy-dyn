@@ -84,6 +84,7 @@ services:
     addr: ":1080"
     handler:
       type: socks5
+      chain: proxy-chain
       auth:
         username: "${PROXY_USERNAME}"
         password: "${PROXY_PASSWORD}"
@@ -91,7 +92,6 @@ services:
         udpBufferSize: 4096
     listener:
       type: tcp
-    chain: proxy-chain
 
 chains:
   - name: proxy-chain
