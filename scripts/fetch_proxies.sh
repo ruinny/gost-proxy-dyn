@@ -75,8 +75,8 @@ for API_KEY in $WEBSHARE_API_KEYS; do
   KEY_PROXY_COUNT=$(echo "$PROXY_TEXT" | grep -c '.' || true)
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ Key #${KEY_COUNT}: 获取到 ${KEY_PROXY_COUNT} 个代理节点。"
 
-  # 追加到汇总文件（每行格式: ip:port:username:password）
-  echo "$PROXY_TEXT" >> "$TEMP_ALL"
+  # 追加到汇总文件（每行格式: ip:port:username:password），清除回车符
+  printf '%s\n' "$PROXY_TEXT" | tr -d '\r' >> "$TEMP_ALL"
 
   KEY_SUCCESS=$((KEY_SUCCESS + 1))
 done
@@ -86,9 +86,12 @@ IFS="$OLD_IFS"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 号池统计: 共 ${KEY_COUNT} 个 Key，${KEY_SUCCESS} 个成功。"
 
 # ── 去重并解析为 JSON ──────────────────────────────────────
-# 按 ip:port 去重（前两个字段），然后截取 MAX_PROXIES 条
-PROXIES_JSON=$(sort -t: -k1,2 -u "$TEMP_ALL" | grep -v '^$' | head -n "$MAX_PROXIES" | awk -F: '{
-  printf "{\"proxy_address\":\"%s\",\"port\":%s,\"username\":\"%s\",\"password\":\"%s\",\"country_code\":\"'"${PROXY_COUNTRY}"'\"}\n", $1, $2, $3, $4
+# 先清除回车符等控制字符，按 ip:port 去重，然后截取 MAX_PROXIES 条
+PROXIES_JSON=$(tr -d '\r' < "$TEMP_ALL" | sed 's/[[:cntrl:]]//g' | sort -t: -k1,2 -u | grep -v '^$' | head -n "$MAX_PROXIES" | awk -F: '{
+  # 清除字段中的残留控制字符
+  for (i=1; i<=NF; i++) gsub(/[^[:print:]]/, "", $i)
+  if ($1 != "" && $2 != "")
+    printf "{\"proxy_address\":\"%s\",\"port\":%s,\"username\":\"%s\",\"password\":\"%s\",\"country_code\":\"'"${PROXY_COUNTRY}"'\"}\n", $1, $2, $3, $4
 }' | jq -sc '.')
 
 PROXY_COUNT=$(echo "$PROXIES_JSON" | jq 'length')
