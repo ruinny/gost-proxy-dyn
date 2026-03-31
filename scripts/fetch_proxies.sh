@@ -1,6 +1,7 @@
 #!/bin/sh
 # fetch_proxies.sh — 从 Webshare Download API 获取代理列表，生成 Gost V3 配置文件
 # 支持多 API Key 号池，使用官方 Download 端点确保国家过滤生效
+# 支持代理可用性检测，自动剔除不可达节点
 
 set -eu
 
@@ -13,6 +14,11 @@ MAX_PROXIES="${MAX_PROXIES:-50}"
 GOST_CONFIG="/etc/gost/gost.yaml"
 PROXY_LIST_JSON="/var/lib/gost/proxy_list.json"
 MONITOR_PORT="${MONITOR_PORT:-8080}"
+
+# 代理连通性检测配置
+PROXY_CHECK_ENABLED="${PROXY_CHECK_ENABLED:-true}"
+PROXY_CHECK_TIMEOUT="${PROXY_CHECK_TIMEOUT:-8}"
+PROXY_CHECK_URL="${PROXY_CHECK_URL:-http://httpbin.org/ip}"
 
 # ── 目录初始化 ─────────────────────────────────────────────
 mkdir -p /etc/gost /var/lib/gost
@@ -85,39 +91,102 @@ IFS="$OLD_IFS"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 号池统计: 共 ${KEY_COUNT} 个 Key，${KEY_SUCCESS} 个成功。"
 
-# ── 去重并解析为 JSON ──────────────────────────────────────
+# ── 去重并截取 ─────────────────────────────────────────────
 # 先清除回车符等控制字符，按 ip:port 去重，然后截取 MAX_PROXIES 条
-PROXIES_JSON=$(tr -d '\r' < "$TEMP_ALL" | sed 's/[[:cntrl:]]//g' | sort -t: -k1,2 -u | grep -v '^$' | head -n "$MAX_PROXIES" | awk -F: '{
-  # 清除字段中的残留控制字符
-  for (i=1; i<=NF; i++) gsub(/[^[:print:]]/, "", $i)
-  if ($1 != "" && $2 != "")
-    printf "{\"proxy_address\":\"%s\",\"port\":%s,\"username\":\"%s\",\"password\":\"%s\",\"country_code\":\"'"${PROXY_COUNTRY}"'\"}\n", $1, $2, $3, $4
-}' | jq -sc '.')
+TEMP_DEDUP="/tmp/proxies_dedup.txt"
+tr -d '\r' < "$TEMP_ALL" | sed 's/[[:cntrl:]]//g' | sort -t: -k1,2 -u | grep -v '^$' | head -n "$MAX_PROXIES" > "$TEMP_DEDUP"
 
-PROXY_COUNT=$(echo "$PROXIES_JSON" | jq 'length')
+TOTAL_FETCHED=$(wc -l < "$TEMP_DEDUP" | tr -d ' ')
 
-if [ "$PROXY_COUNT" -eq 0 ]; then
+if [ "$TOTAL_FETCHED" -eq 0 ]; then
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✗ 未获取到任何代理节点，保持旧配置。"
   exit 1
 fi
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ 合并去重后共 ${PROXY_COUNT} 个 ${PROXY_COUNTRY} 代理节点。"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ 合并去重后共 ${TOTAL_FETCHED} 个 ${PROXY_COUNTRY} 代理节点。"
 
-# ── 保存到监控文件（含时间戳） ───────────────────────────────
+# ── 代理可用性检测 ─────────────────────────────────────────
+TEMP_VALID="/tmp/proxies_valid.txt"
+> "$TEMP_VALID"
+
+if [ "$PROXY_CHECK_ENABLED" = "true" ]; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] 开始代理可用性检测（超时: ${PROXY_CHECK_TIMEOUT}s）..."
+  CHECK_PASS=0
+  CHECK_FAIL=0
+  CHECK_INDEX=0
+
+  while IFS= read -r LINE; do
+    # 跳过空行
+    [ -z "$LINE" ] && continue
+
+    CHECK_INDEX=$((CHECK_INDEX + 1))
+
+    # 解析字段：ip:port:username:password
+    P_HOST=$(echo "$LINE" | cut -d: -f1)
+    P_PORT=$(echo "$LINE" | cut -d: -f2)
+    P_USER=$(echo "$LINE" | cut -d: -f3)
+    P_PASS=$(echo "$LINE" | cut -d: -f4)
+
+    # 使用 curl 通过该 HTTP 代理访问测试 URL
+    if curl -sf \
+      --proxy "http://${P_USER}:${P_PASS}@${P_HOST}:${P_PORT}" \
+      --connect-timeout 5 \
+      --max-time "$PROXY_CHECK_TIMEOUT" \
+      -o /dev/null \
+      "$PROXY_CHECK_URL" 2>/dev/null; then
+      # 检测通过，加入可用列表
+      echo "$LINE" >> "$TEMP_VALID"
+      CHECK_PASS=$((CHECK_PASS + 1))
+    else
+      # 检测失败，打印日志并跳过
+      CHECK_FAIL=$((CHECK_FAIL + 1))
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✗ 节点 #${CHECK_INDEX} ${P_HOST}:${P_PORT} 连通性检测失败，已剔除。"
+    fi
+  done < "$TEMP_DEDUP"
+
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] 检测完成: ${CHECK_PASS} 个通过，${CHECK_FAIL} 个失败（共 ${TOTAL_FETCHED} 个）。"
+  CHECKED_COUNT=$CHECK_PASS
+else
+  # 跳过检测，直接使用全部代理
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] 代理可用性检测已禁用，跳过检测。"
+  cp "$TEMP_DEDUP" "$TEMP_VALID"
+  CHECKED_COUNT=$TOTAL_FETCHED
+fi
+
+# ── 将可用代理解析为 JSON ──────────────────────────────────
+PROXIES_JSON=$(awk -F: '{
+  # 清除字段中的残留控制字符
+  for (i=1; i<=NF; i++) gsub(/[^[:print:]]/, "", $i)
+  if ($1 != "" && $2 != "")
+    printf "{\"proxy_address\":\"%s\",\"port\":%s,\"username\":\"%s\",\"password\":\"%s\",\"country_code\":\"'"${PROXY_COUNTRY}"'\"}\n", $1, $2, $3, $4
+}' "$TEMP_VALID" | jq -sc '.')
+
+PROXY_COUNT=$(echo "$PROXIES_JSON" | jq 'length')
+
+if [ "$PROXY_COUNT" -eq 0 ]; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✗ 可用性检测后无可用代理节点，保持旧配置。"
+  exit 1
+fi
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ 最终可用代理节点: ${PROXY_COUNT} 个（拉取 ${TOTAL_FETCHED}，通过 ${CHECKED_COUNT}）。"
+
+# ── 保存到监控文件（含时间戳和检测统计） ──────────────────────
 echo "$PROXIES_JSON" | jq -c \
   --arg updated_at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
   --arg country "$PROXY_COUNTRY" \
   --argjson count "$PROXY_COUNT" \
   --argjson key_count "$KEY_COUNT" \
   --argjson key_success "$KEY_SUCCESS" \
-  '{"updated_at": $updated_at, "country": $country, "count": $count, "key_count": $key_count, "key_success": $key_success, "proxies": .}' \
+  --argjson total_fetched "$TOTAL_FETCHED" \
+  --argjson checked_count "$CHECKED_COUNT" \
+  '{"updated_at": $updated_at, "country": $country, "count": $count, "key_count": $key_count, "key_success": $key_success, "total_fetched": $total_fetched, "checked_count": $checked_count, "proxies": .}' \
   > "$PROXY_LIST_JSON"
 
 # ── 生成 Gost V3 YAML 配置 ────────────────────────────────
 TMP_CONFIG="${GOST_CONFIG}.tmp"
 cat > "$TMP_CONFIG" <<YAML_HEADER
 # Gost V3 动态代理池配置
-# 自动生成于 $(date '+%Y-%m-%d %H:%M:%S')，代理数量：${PROXY_COUNT}，号池 Key 数：${KEY_COUNT}
+# 自动生成于 $(date '+%Y-%m-%d %H:%M:%S')，可用代理：${PROXY_COUNT}/${TOTAL_FETCHED}，号池 Key 数：${KEY_COUNT}
 services:
   - name: socks5-ingress
     addr: ":1080"
@@ -171,3 +240,6 @@ YAML_FOOTER
 mv "$TMP_CONFIG" "$GOST_CONFIG"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ Gost 配置已写入 ${GOST_CONFIG}。"
+
+# ── 清理临时文件 ──────────────────────────────────────────
+rm -f "$TEMP_DEDUP" "$TEMP_VALID"

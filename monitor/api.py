@@ -101,6 +101,8 @@ async def get_status() -> dict[str, Any]:
             "strategy": "random",
             "key_count": data.get("key_count", api_key_count),
             "key_success": data.get("key_success", 0),
+            "total_fetched": data.get("total_fetched", 0),
+            "checked_count": data.get("checked_count", 0),
         },
         "config": {
             "max_proxies": int(os.getenv("MAX_PROXIES", "50")),

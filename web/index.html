@@ -6,7 +6,7 @@
   <title>Gost 代理池监控面板</title>
   <meta name="description" content="实时监控 Gost V3 动态代理池的运行状态、节点列表和健康情况">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     /* ── CSS 变量 & 重置 ─────────────────────────── */
     :root {
@@ -31,7 +31,7 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html { scroll-behavior: smooth; }
     body {
-      font-family: 'Inter', sans-serif;
+      font-family: 'Microsoft YaHei', 'Inter', sans-serif;
       background: var(--bg-base);
       color: var(--text-primary);
       min-height: 100vh;
@@ -160,7 +160,7 @@
       border: 1px solid;
       transition: var(--transition);
       text-decoration: none;
-      font-family: 'Inter', sans-serif;
+      font-family: 'Microsoft YaHei', 'Inter', sans-serif;
     }
     .btn-primary {
       color: var(--accent-cyan);
@@ -322,7 +322,7 @@
       border-radius: 4px;
       color: #a78bfa;
       font-size: 11px;
-      font-family: 'Inter', sans-serif;
+      font-family: 'Microsoft YaHei', 'Inter', sans-serif;
       font-weight: 600;
       letter-spacing: 0.05em;
     }
@@ -361,7 +361,7 @@
       align-items: center;
       justify-content: center;
       transition: var(--transition);
-      font-family: 'Inter', sans-serif;
+      font-family: 'Microsoft YaHei', 'Inter', sans-serif;
     }
     .pg-btn:hover:not(:disabled) {
       border-color: var(--accent-cyan);
@@ -501,6 +501,7 @@
         <div class="stat-label">⚡ 代理节点总数</div>
         <div class="stat-value cyan" id="stat-total">--</div>
         <div class="stat-sub" id="stat-country">筛选国家: --</div>
+        <div class="stat-sub" id="stat-check" style="margin-top:2px;color:var(--accent-green);">检测通过: --</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">🟢 Gost 服务状态</div>
@@ -568,10 +569,6 @@
 
     <!-- 底部配置信息 -->
     <div class="footer-info">
-      <div class="info-item">
-        <div class="info-label">SOCKS5 入口</div>
-        <div class="info-value" id="info-socks5">socks5://user:pass@host:1080</div>
-      </div>
       <div class="info-item">
         <div class="info-label">Gost PID</div>
         <div class="info-value" id="info-pid">--</div>
@@ -653,6 +650,15 @@
         document.getElementById('stat-country').textContent = `筛选国家: ${data.proxy_pool?.country ?? '--'}`;
         document.getElementById('stat-updated').textContent = formatDateTime(data.proxy_pool?.updated_at);
         document.getElementById('stat-interval').textContent = `刷新间隔: ${data.config?.refresh_interval_min ?? '--'} 分钟`;
+
+        // 检测通过率
+        const totalFetched = data.proxy_pool?.total_fetched ?? 0;
+        const checkedCount = data.proxy_pool?.checked_count ?? 0;
+        if (totalFetched > 0) {
+          document.getElementById('stat-check').textContent = `检测通过: ${checkedCount}/${totalFetched}`;
+        } else {
+          document.getElementById('stat-check').textContent = `检测通过: --`;
+        }
 
         // 号池 Key 统计
         const keyCount = data.proxy_pool?.key_count ?? 0;
