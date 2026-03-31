@@ -1,0 +1,9 @@
+[project]
+name = "gost-proxy-monitor"
+version = "0.1.0"
+description = "Gost dynamic proxy pool monitor API"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
+]

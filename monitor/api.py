@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -46,29 +46,19 @@ def _read_proxy_data() -> dict[str, Any]:
         return json.load(f)
 
 
-def _is_gost_running() -> bool:
-    """检查 Gost 进程是否运行"""
-    try:
-        pid_file = Path("/var/run/gost.pid")
-        if not pid_file.exists():
-            return False
-        pid = int(pid_file.read_text().strip())
-        # 发送信号 0 检查进程是否存在
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, ValueError, PermissionError, OSError):
-        return False
-
-
 def _get_gost_pid() -> int | None:
     """获取 Gost 进程 PID"""
     try:
-        pid_file = Path("/var/run/gost.pid")
-        if pid_file.exists():
-            return int(pid_file.read_text().strip())
-    except (ValueError, OSError):
+        result = subprocess.run(["pidof", "gost"], capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout.strip():
+            return int(result.stdout.strip().split()[0])
+    except Exception:
         pass
     return None
+
+def _is_gost_running() -> bool:
+    """检查 Gost 进程是否运行"""
+    return _get_gost_pid() is not None
 
 
 # ── API 路由 ──────────────────────────────────────────────
@@ -154,24 +144,18 @@ async def get_proxies(
 
 
 @app.post("/api/reload")
-async def trigger_reload() -> dict[str, str]:
-    """手动触发代理列表热重载"""
-    try:
-        result = subprocess.run(
+async def trigger_reload(background_tasks: BackgroundTasks) -> dict[str, str]:
+    """手动触发代理列表热重载（异步后台任务）"""
+    def _do_reload():
+        print("[monitor] UI triggered background reload...")
+        subprocess.run(
             ["/app/scripts/reload.sh"],
-            capture_output=True,
-            text=True,
+            capture_output=False,
             timeout=60,
         )
-        if result.returncode == 0:
-            return {"status": "success", "message": "热重载已触发，Gost 配置已更新。"}
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail=f"热重载失败：{result.stderr}",
-            )
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="热重载超时（60s）。")
+
+    background_tasks.add_task(_do_reload)
+    return {"status": "success", "message": "热重载任务已提交后台执行。"}
 
 
 # ── 静态文件服务 ──────────────────────────────────────────

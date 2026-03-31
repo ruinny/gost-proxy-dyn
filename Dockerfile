@@ -9,15 +9,16 @@ ARG GOST_VERSION=3.0.0
 ARG TARGETARCH=amd64
 
 # ── 安装系统依赖 ─────────────────────────────────────────────
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 RUN apk add --no-cache \
     curl \
     jq \
     python3 \
-    py3-pip \
     busybox-suid \
     bash \
     ca-certificates \
-    tzdata
+    tzdata \
+    supervisor
 
 # ── 设置时区 ─────────────────────────────────────────────────
 ENV TZ=Asia/Shanghai
@@ -37,8 +38,8 @@ RUN set -eux; \
     gost -V
 
 # ── 安装 Python 依赖 ─────────────────────────────────────────
-COPY monitor/requirements.txt /tmp/requirements.txt
-RUN pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements.txt
+COPY pyproject.toml /app/
+RUN cd /app && uv sync --no-install-project
 
 # ── 创建目录结构 ─────────────────────────────────────────────
 RUN mkdir -p /etc/gost /var/lib/gost /var/log /app/scripts /app/monitor /app/web
@@ -47,6 +48,7 @@ RUN mkdir -p /etc/gost /var/lib/gost /var/log /app/scripts /app/monitor /app/web
 COPY scripts/ /app/scripts/
 COPY monitor/api.py /app/monitor/api.py
 COPY web/ /app/web/
+COPY supervisord.conf /etc/supervisord.conf
 
 # ── 脚本可执行权限 ───────────────────────────────────────────
 RUN chmod +x /app/scripts/*.sh

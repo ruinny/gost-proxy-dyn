@@ -114,7 +114,8 @@ echo "$PROXIES_JSON" | jq -c \
   > "$PROXY_LIST_JSON"
 
 # ── 生成 Gost V3 YAML 配置 ────────────────────────────────
-cat > "$GOST_CONFIG" <<YAML_HEADER
+TMP_CONFIG="${GOST_CONFIG}.tmp"
+cat > "$TMP_CONFIG" <<YAML_HEADER
 # Gost V3 动态代理池配置
 # 自动生成于 $(date '+%Y-%m-%d %H:%M:%S')，代理数量：${PROXY_COUNT}，号池 Key 数：${KEY_COUNT}
 services:
@@ -152,10 +153,10 @@ echo "$PROXIES_JSON" | jq -r 'to_entries[] |
   "                username: \"" + .value.username + "\"\n" +
   "                password: \"" + .value.password + "\"\n" +
   "            dialer:\n" +
-  "              type: tcp"' >> "$GOST_CONFIG"
+  "              type: tcp"' >> "$TMP_CONFIG"
 
 # ── 追加 API 和监控配置 ───────────────────────────────────
-cat >> "$GOST_CONFIG" <<YAML_FOOTER
+cat >> "$TMP_CONFIG" <<YAML_FOOTER
 
 api:
   addr: "127.0.0.1:18080"
@@ -165,5 +166,8 @@ log:
   level: warn
   format: json
 YAML_FOOTER
+
+# 原子替换为正式配置
+mv "$TMP_CONFIG" "$GOST_CONFIG"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ Gost 配置已写入 ${GOST_CONFIG}。"
