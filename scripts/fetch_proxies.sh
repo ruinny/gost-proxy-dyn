@@ -1,10 +1,11 @@
 #!/bin/sh
-# fetch_proxies.sh — 从 Webshare API 获取代理列表，生成 Gost V3 配置文件
+# fetch_proxies.sh — 从 Webshare Download API 获取代理列表，生成 Gost V3 配置文件
+# 支持多 API Key 号池，使用官方 Download 端点确保国家过滤生效
 
 set -eu
 
 # ── 配置变量 ──────────────────────────────────────────────
-WEBSHARE_API_KEY="${WEBSHARE_API_KEY:?必须设置 WEBSHARE_API_KEY 环境变量}"
+WEBSHARE_API_KEYS="${WEBSHARE_API_KEYS:?必须设置 WEBSHARE_API_KEYS 环境变量}"
 PROXY_USERNAME="${PROXY_USERNAME:-proxyuser}"
 PROXY_PASSWORD="${PROXY_PASSWORD:-proxypass}"
 PROXY_COUNTRY="${PROXY_COUNTRY:-US}"
@@ -16,69 +17,103 @@ MONITOR_PORT="${MONITOR_PORT:-8080}"
 # ── 目录初始化 ─────────────────────────────────────────────
 mkdir -p /etc/gost /var/lib/gost
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] 正在从 Webshare API 拉取代理列表..."
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] 正在从 Webshare Download API 拉取代理列表..."
 
-# ── 拉取代理列表（分页，最多获取 MAX_PROXIES 个节点）──────────
-# 每页最多 100 个，计算需要的页数
-PAGE_SIZE=100
-PAGES=$(( (MAX_PROXIES + PAGE_SIZE - 1) / PAGE_SIZE ))
+# ── 将逗号分隔的 API Keys 解析为列表 ───────────────────────
+TEMP_ALL="/tmp/proxies_all.txt"
+> "$TEMP_ALL"
 
-# 收集所有节点到临时文件
-TEMP_ALL="/tmp/proxies_all.json"
-echo "[]" > "$TEMP_ALL"
+KEY_COUNT=0
+KEY_SUCCESS=0
 
-i=1
-TOTAL_FETCHED=0
-while [ "$i" -le "$PAGES" ]; do
-  RESPONSE=$(curl -sf \
-    "https://proxy.webshare.io/api/v2/proxy/list/?mode=direct&page=${i}&page_size=${PAGE_SIZE}&country_code=${PROXY_COUNTRY}" \
-    -H "Authorization: Token ${WEBSHARE_API_KEY}" \
-    --max-time 30 || echo "")
+# 保存原始 IFS 并按逗号分割
+OLD_IFS="$IFS"
+IFS=","
 
-  if [ -z "$RESPONSE" ]; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠ 第 ${i} 页请求失败，跳过。"
-    break
+for API_KEY in $WEBSHARE_API_KEYS; do
+  # 去除首尾空格
+  API_KEY=$(echo "$API_KEY" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  if [ -z "$API_KEY" ]; then
+    continue
   fi
 
-  # 提取该页节点并合并
-  PAGE_NODES=$(echo "$RESPONSE" | jq -c '.results // []')
-  COMBINED=$(jq -c --argjson new "$PAGE_NODES" '. + $new' "$TEMP_ALL")
-  echo "$COMBINED" > "$TEMP_ALL"
+  KEY_COUNT=$((KEY_COUNT + 1))
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] 处理第 ${KEY_COUNT} 个 API Key..."
 
-  COUNT=$(echo "$PAGE_NODES" | jq 'length')
-  TOTAL_FETCHED=$((TOTAL_FETCHED + COUNT))
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] 第 ${i} 页获取到 ${COUNT} 个节点，累计 ${TOTAL_FETCHED} 个。"
+  # 第一步：通过 Proxy Config API 获取 proxy_list_download_token
+  CONFIG_RESPONSE=$(curl -sf \
+    "https://proxy.webshare.io/api/v2/proxy/config/" \
+    -H "Authorization: Token ${API_KEY}" \
+    --max-time 15 || echo "")
 
-  # 如果已够数量或者返回节点数小于 PAGE_SIZE（最后一页），停止
-  if [ "$TOTAL_FETCHED" -ge "$MAX_PROXIES" ] || [ "$COUNT" -lt "$PAGE_SIZE" ]; then
-    break
+  if [ -z "$CONFIG_RESPONSE" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠ Key #${KEY_COUNT}: 获取 Proxy Config 失败，跳过。"
+    continue
   fi
-  i=$((i + 1))
+
+  DOWNLOAD_TOKEN=$(echo "$CONFIG_RESPONSE" | jq -r '.proxy_list_download_token // empty')
+
+  if [ -z "$DOWNLOAD_TOKEN" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠ Key #${KEY_COUNT}: 未找到 download_token，跳过。"
+    continue
+  fi
+
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ Key #${KEY_COUNT}: 获取到 download_token。"
+
+  # 第二步：使用 Download API 拉取代理列表（国家代码嵌入路径）
+  # 格式: GET /api/v2/proxy/list/download/{token}/{country_codes}/any/{auth_method}/{endpoint_mode}/{search}/
+  DOWNLOAD_URL="https://proxy.webshare.io/api/v2/proxy/list/download/${DOWNLOAD_TOKEN}/${PROXY_COUNTRY}/any/username/direct/-/"
+
+  PROXY_TEXT=$(curl -sf "$DOWNLOAD_URL" --max-time 30 || echo "")
+
+  if [ -z "$PROXY_TEXT" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠ Key #${KEY_COUNT}: Download API 请求失败，跳过。"
+    continue
+  fi
+
+  # 统计该 Key 获取到的代理数
+  KEY_PROXY_COUNT=$(echo "$PROXY_TEXT" | grep -c '.' || true)
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ Key #${KEY_COUNT}: 获取到 ${KEY_PROXY_COUNT} 个代理节点。"
+
+  # 追加到汇总文件（每行格式: ip:port:username:password）
+  echo "$PROXY_TEXT" >> "$TEMP_ALL"
+
+  KEY_SUCCESS=$((KEY_SUCCESS + 1))
 done
 
-# 截取到 MAX_PROXIES 限制
-PROXIES=$(jq -c ".[0:${MAX_PROXIES}]" "$TEMP_ALL")
-PROXY_COUNT=$(echo "$PROXIES" | jq 'length')
+IFS="$OLD_IFS"
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] 号池统计: 共 ${KEY_COUNT} 个 Key，${KEY_SUCCESS} 个成功。"
+
+# ── 去重并解析为 JSON ──────────────────────────────────────
+# 按 ip:port 去重（前两个字段），然后截取 MAX_PROXIES 条
+PROXIES_JSON=$(sort -t: -k1,2 -u "$TEMP_ALL" | grep -v '^$' | head -n "$MAX_PROXIES" | awk -F: '{
+  printf "{\"proxy_address\":\"%s\",\"port\":%s,\"username\":\"%s\",\"password\":\"%s\",\"country_code\":\"'"${PROXY_COUNTRY}"'\"}\n", $1, $2, $3, $4
+}' | jq -sc '.')
+
+PROXY_COUNT=$(echo "$PROXIES_JSON" | jq 'length')
 
 if [ "$PROXY_COUNT" -eq 0 ]; then
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✗ 未获取到任何代理节点，保持旧配置。"
   exit 1
 fi
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ 获取到 ${PROXY_COUNT} 个 ${PROXY_COUNTRY} 代理节点。"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ 合并去重后共 ${PROXY_COUNT} 个 ${PROXY_COUNTRY} 代理节点。"
 
 # ── 保存到监控文件（含时间戳） ───────────────────────────────
-echo "$PROXIES" | jq -c \
+echo "$PROXIES_JSON" | jq -c \
   --arg updated_at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
   --arg country "$PROXY_COUNTRY" \
   --argjson count "$PROXY_COUNT" \
-  '{"updated_at": $updated_at, "country": $country, "count": $count, "proxies": .}' \
+  --argjson key_count "$KEY_COUNT" \
+  --argjson key_success "$KEY_SUCCESS" \
+  '{"updated_at": $updated_at, "country": $country, "count": $count, "key_count": $key_count, "key_success": $key_success, "proxies": .}' \
   > "$PROXY_LIST_JSON"
 
 # ── 生成 Gost V3 YAML 配置 ────────────────────────────────
 cat > "$GOST_CONFIG" <<YAML_HEADER
 # Gost V3 动态代理池配置
-# 自动生成于 $(date '+%Y-%m-%d %H:%M:%S')，代理数量：${PROXY_COUNT}
+# 自动生成于 $(date '+%Y-%m-%d %H:%M:%S')，代理数量：${PROXY_COUNT}，号池 Key 数：${KEY_COUNT}
 services:
   - name: socks5-ingress
     addr: ":1080"
@@ -105,7 +140,7 @@ chains:
 YAML_HEADER
 
 # 逐节点追加到配置（注意：Webshare 提供的是 HTTP 代理，connector 类型为 http）
-echo "$PROXIES" | jq -r 'to_entries[] |
+echo "$PROXIES_JSON" | jq -r 'to_entries[] |
   "          - name: node-" + (.key | tostring) + "\n" +
   "            addr: \"" + .value.proxy_address + ":" + (.value.port | tostring) + "\"\n" +
   "            connector:\n" +

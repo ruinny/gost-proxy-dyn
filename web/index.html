@@ -508,9 +508,9 @@
         <div class="stat-sub">SOCKS5 :1080</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">♻ 负载均衡策略</div>
-        <div class="stat-value purple">Random</div>
-        <div class="stat-sub">随机选择 · MaxFails: 3</div>
+        <div class="stat-label">🔑 号池 API Key</div>
+        <div class="stat-value purple" id="stat-keys">--</div>
+        <div class="stat-sub" id="stat-keys-sub">策略: Random · MaxFails: 3</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">🕐 最近更新时间</div>
@@ -653,6 +653,12 @@
         document.getElementById('stat-country').textContent = `筛选国家: ${data.proxy_pool?.country ?? '--'}`;
         document.getElementById('stat-updated').textContent = formatDateTime(data.proxy_pool?.updated_at);
         document.getElementById('stat-interval').textContent = `刷新间隔: ${data.config?.refresh_interval_min ?? '--'} 分钟`;
+
+        // 号池 Key 统计
+        const keyCount = data.proxy_pool?.key_count ?? 0;
+        const keySuccess = data.proxy_pool?.key_success ?? 0;
+        document.getElementById('stat-keys').textContent = `${keySuccess}/${keyCount}`;
+        document.getElementById('stat-keys-sub').textContent = `${keySuccess} 个成功 · 策略: Random`;
 
         // 底部信息
         document.getElementById('info-pid').textContent = data.service?.gost_pid ?? '--';

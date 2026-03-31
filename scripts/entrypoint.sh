@@ -45,7 +45,7 @@ echo "[entrypoint] 监控 API 已启动。"
 # ── 4. 设置 Cron 定时热重载 ───────────────────────────────
 echo "[entrypoint] 设置 Cron 定时任务（每 ${REFRESH_INTERVAL} 分钟）..."
 # 将环境变量写入 /etc/environment 供 cron 读取
-env | grep -E '^(WEBSHARE_API_KEY|PROXY_USERNAME|PROXY_PASSWORD|PROXY_COUNTRY|MAX_PROXIES|REFRESH_INTERVAL|MONITOR_PORT)=' \
+env | grep -E '^(WEBSHARE_API_KEYS|PROXY_USERNAME|PROXY_PASSWORD|PROXY_COUNTRY|MAX_PROXIES|REFRESH_INTERVAL|MONITOR_PORT)=' \
   > /etc/environment 2>/dev/null || true
 
 # 写入 cron 任务

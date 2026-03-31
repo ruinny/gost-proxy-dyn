@@ -94,6 +94,10 @@ async def get_status() -> dict[str, Any]:
     gost_running = _is_gost_running()
     gost_pid = _get_gost_pid()
 
+    # 计算号池 Key 数量
+    api_keys_str = os.getenv("WEBSHARE_API_KEYS", "")
+    api_key_count = len([k for k in api_keys_str.split(",") if k.strip()]) if api_keys_str else 0
+
     return {
         "service": {
             "gost_running": gost_running,
@@ -105,6 +109,8 @@ async def get_status() -> dict[str, Any]:
             "country": data.get("country", "US"),
             "updated_at": data.get("updated_at"),
             "strategy": "random",
+            "key_count": data.get("key_count", api_key_count),
+            "key_success": data.get("key_success", 0),
         },
         "config": {
             "max_proxies": int(os.getenv("MAX_PROXIES", "50")),

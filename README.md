@@ -8,10 +8,11 @@
 
 | 功能 | 说明 |
 |------|------|
-| 🔄 **动态代理池** | 启动时自动从 Webshare API 获取最新代理列表 |
+| 🔄 **动态代理池** | 启动时自动从 Webshare Download API 获取最新代理列表 |
+| 🔑 **多 Key 号池** | 支持多个 API Key 组队，聚合代理节点提高吞吐量 |
 | ♻ **无中断热重载** | Cron 定时拉取 + `SIGHUP` 信号重载，服务不中断 |
 | ⚖ **高可用出口** | Random 策略随机选择节点，MaxFails 自动熔断 |
-| 🌍 **区域筛选** | 默认筛选美国（US）代理，可自定义 |
+| 🌍 **区域筛选** | 通过 Download API 路径级国家过滤，确保精准匹配 |
 | 🔐 **统一认证** | 统一入口凭证，客户端连接简单 |
 | 📊 **监控面板** | 赛博朋克风格 Web 监控面板，实时查看节点状态 |
 | 🐳 **Docker 部署** | 一键 Docker 部署，适配 Zeabur PaaS |
@@ -78,11 +79,11 @@ docker compose logs -f
 
 | 变量 | 必填 | 默认值 | 说明 |
 |------|------|--------|------|
-| `WEBSHARE_API_KEY` | ✅ | — | Webshare API Token |
+| `WEBSHARE_API_KEYS` | ✅ | — | Webshare API Token，多个用逗号分隔组成号池 |
 | `PROXY_USERNAME` | ✅ | `proxyuser` | SOCKS5 入口认证用户名 |
 | `PROXY_PASSWORD` | ✅ | — | SOCKS5 入口认证密码 |
-| `PROXY_COUNTRY` | ❌ | `US` | 代理节点国家（ISO 代码） |
-| `MAX_PROXIES` | ❌ | `50` | 最大使用代理数量 |
+| `PROXY_COUNTRY` | ❌ | `US` | 代理节点国家（ISO 代码），多国用连字符分隔 |
+| `MAX_PROXIES` | ❌ | `50` | 最大使用代理数量（从合并池中截取） |
 | `REFRESH_INTERVAL` | ❌ | `30` | 定时刷新间隔（分钟） |
 | `MONITOR_PORT` | ❌ | `8080` | 监控面板端口 |
 
