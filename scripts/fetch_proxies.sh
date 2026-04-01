@@ -25,10 +25,9 @@ PROXY_CHECK_PARALLEL="${PROXY_CHECK_PARALLEL:-10}"
 TEMP_ALL="/tmp/proxies_all.txt"
 TEMP_DEDUP="/tmp/proxies_dedup.txt"
 TEMP_VALID="/tmp/proxies_valid.txt"
-TEMP_NETRC="/tmp/.proxy_netrc"
 
 # 确保脚本退出时清理所有临时文件
-trap 'rm -f "$TEMP_ALL" "$TEMP_DEDUP" "$TEMP_VALID" "$TEMP_NETRC" /tmp/.proxy_check_*.tmp' EXIT
+trap 'rm -f "$TEMP_ALL" "$TEMP_DEDUP" "$TEMP_VALID" /tmp/.proxy_check_*.tmp' EXIT
 
 # ── 目录初始化 ─────────────────────────────────────────────
 mkdir -p /etc/gost /var/lib/gost
@@ -130,15 +129,9 @@ if [ "$PROXY_CHECK_ENABLED" = "true" ]; then
     P_USER=$(echo "$LINE" | cut -d: -f3)
     P_PASS=$(echo "$LINE" | cut -d: -f4)
 
-    # 将凭证写入临时 netrc 文件，避免通过命令行暴露
-    NETRC_TMP="/tmp/.netrc_check_${INDEX}"
-    printf "machine %s\nlogin %s\npassword %s\n" "$P_HOST" "$P_USER" "$P_PASS" > "$NETRC_TMP"
-    chmod 600 "$NETRC_TMP"
-
     if curl -sf \
       --proxy "http://${P_HOST}:${P_PORT}" \
-      --proxy-user "" \
-      --netrc-file "$NETRC_TMP" \
+      --proxy-user "${P_USER}:${P_PASS}" \
       --connect-timeout 5 \
       --max-time "$PROXY_CHECK_TIMEOUT" \
       -o /dev/null \
@@ -150,8 +143,6 @@ if [ "$PROXY_CHECK_ENABLED" = "true" ]; then
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✗ 节点 #${INDEX} ${P_HOST}:${P_PORT} 连通性检测失败，已剔除。"
       > "$RESULT_FILE"
     fi
-
-    rm -f "$NETRC_TMP"
   }
 
   CHECK_INDEX=0
