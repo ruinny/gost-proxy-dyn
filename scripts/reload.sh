@@ -12,9 +12,9 @@ echo "${LOG_PREFIX} 开始代理列表热重载..."
 if /app/scripts/fetch_proxies.sh; then
   echo "${LOG_PREFIX} ✓ 配置生成成功，发送 SIGHUP 到 Gost..."
 
-  GOST_PID=$(pidof gost || echo "")
+  GOST_PID=$(pgrep -x gost | head -1 || echo "")
   if [ -n "$GOST_PID" ]; then
-    kill -HUP $GOST_PID
+    kill -HUP "$GOST_PID"
     echo "${LOG_PREFIX} ✓ 已向 Gost (PID $GOST_PID) 发送 SIGHUP 进行无中断重载。"
   else
     echo "${LOG_PREFIX} ✗ Gost 进程缺失（等待 Supervisor 自动恢复）。"

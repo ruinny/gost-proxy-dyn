@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Header, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,9 +29,11 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# CORS 来源可通过环境变量 CORS_ORIGINS 配置，逗号分隔，默认允许所有
+_cors_origins = os.getenv("CORS_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[o.strip() for o in _cors_origins],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
@@ -47,11 +49,14 @@ def _read_proxy_data() -> dict[str, Any]:
 
 
 def _get_gost_pid() -> int | None:
-    """获取 Gost 进程 PID"""
+    """获取 Gost 进程 PID（使用 pgrep 增强兼容性）"""
     try:
-        result = subprocess.run(["pidof", "gost"], capture_output=True, text=True)
+        result = subprocess.run(
+            ["pgrep", "-x", "gost"], capture_output=True, text=True,
+        )
         if result.returncode == 0 and result.stdout.strip():
-            return int(result.stdout.strip().split()[0])
+            # pgrep 可能返回多行 PID，取第一个
+            return int(result.stdout.strip().splitlines()[0])
     except Exception:
         pass
     return None
@@ -128,12 +133,12 @@ async def get_proxies(
     end = start + page_size
     page_proxies = proxies[start:end]
 
-    # 脱敏处理
+    # 脱敏处理：使用列表推导式正确替换密码字段
     if mask:
-        for p in page_proxies:
-            p = dict(p)
-            if "password" in p:
-                p["password"] = "****"
+        page_proxies = [
+            {**p, "password": "****"} if "password" in p else dict(p)
+            for p in page_proxies
+        ]
 
     return {
         "total": total,
@@ -145,15 +150,27 @@ async def get_proxies(
     }
 
 
+# 热重载 API Token（从环境变量读取，为空则不鉴权）
+_reload_token = os.getenv("RELOAD_API_TOKEN", "")
+
+
 @app.post("/api/reload")
-async def trigger_reload(background_tasks: BackgroundTasks) -> dict[str, str]:
-    """手动触发代理列表热重载（异步后台任务）"""
-    def _do_reload():
-        print("[monitor] UI triggered background reload...")
+async def trigger_reload(
+    background_tasks: BackgroundTasks,
+    authorization: str | None = Header(default=None),
+) -> dict[str, str]:
+    """手动触发代理列表热重载（异步后台任务，支持 Token 鉴权）"""
+    # 如配置了 RELOAD_API_TOKEN 则进行鉴权校验
+    if _reload_token:
+        if not authorization or authorization != f"Bearer {_reload_token}":
+            raise HTTPException(status_code=403, detail="鉴权失败：缺少或无效的 Token。")
+
+    def _do_reload() -> None:
+        print("[monitor] UI 触发后台热重载...")
         subprocess.run(
             ["/app/scripts/reload.sh"],
             capture_output=False,
-            timeout=60,
+            timeout=120,
         )
 
     background_tasks.add_task(_do_reload)

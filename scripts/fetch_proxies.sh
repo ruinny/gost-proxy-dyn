@@ -19,16 +19,25 @@ MONITOR_PORT="${MONITOR_PORT:-8080}"
 PROXY_CHECK_ENABLED="${PROXY_CHECK_ENABLED:-true}"
 PROXY_CHECK_TIMEOUT="${PROXY_CHECK_TIMEOUT:-8}"
 PROXY_CHECK_URL="${PROXY_CHECK_URL:-http://httpbin.org/ip}"
+PROXY_CHECK_PARALLEL="${PROXY_CHECK_PARALLEL:-10}"
+
+# ── 临时文件 & 清理 trap ─────────────────────────────────────
+TEMP_ALL="/tmp/proxies_all.txt"
+TEMP_DEDUP="/tmp/proxies_dedup.txt"
+TEMP_VALID="/tmp/proxies_valid.txt"
+TEMP_NETRC="/tmp/.proxy_netrc"
+
+# 确保脚本退出时清理所有临时文件
+trap 'rm -f "$TEMP_ALL" "$TEMP_DEDUP" "$TEMP_VALID" "$TEMP_NETRC" /tmp/.proxy_check_*.tmp' EXIT
 
 # ── 目录初始化 ─────────────────────────────────────────────
 mkdir -p /etc/gost /var/lib/gost
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 正在从 Webshare Download API 拉取代理列表..."
 
-# ── 将逗号分隔的 API Keys 解析为列表 ───────────────────────
-TEMP_ALL="/tmp/proxies_all.txt"
 > "$TEMP_ALL"
 
+# ── 将逗号分隔的 API Keys 解析为列表 ───────────────────────
 KEY_COUNT=0
 KEY_SUCCESS=0
 
@@ -67,7 +76,6 @@ for API_KEY in $WEBSHARE_API_KEYS; do
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ Key #${KEY_COUNT}: 获取到 download_token。"
 
   # 第二步：使用 Download API 拉取代理列表（国家代码嵌入路径）
-  # 格式: GET /api/v2/proxy/list/download/{token}/{country_codes}/any/{auth_method}/{endpoint_mode}/{search}/
   DOWNLOAD_URL="https://proxy.webshare.io/api/v2/proxy/list/download/${DOWNLOAD_TOKEN}/${PROXY_COUNTRY}/any/username/direct/-/"
 
   PROXY_TEXT=$(curl -sf "$DOWNLOAD_URL" --max-time 30 || echo "")
@@ -93,7 +101,6 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] 号池统计: 共 ${KEY_COUNT} 个 Key，${
 
 # ── 去重并截取 ─────────────────────────────────────────────
 # 先清除回车符等控制字符，按 ip:port 去重，然后截取 MAX_PROXIES 条
-TEMP_DEDUP="/tmp/proxies_dedup.txt"
 tr -d '\r' < "$TEMP_ALL" | sed 's/[[:cntrl:]]//g' | sort -t: -k1,2 -u | grep -v '^$' | head -n "$MAX_PROXIES" > "$TEMP_DEDUP"
 
 TOTAL_FETCHED=$(wc -l < "$TEMP_DEDUP" | tr -d ' ')
@@ -106,14 +113,49 @@ fi
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ 合并去重后共 ${TOTAL_FETCHED} 个 ${PROXY_COUNTRY} 代理节点。"
 
 # ── 代理可用性检测 ─────────────────────────────────────────
-TEMP_VALID="/tmp/proxies_valid.txt"
 > "$TEMP_VALID"
 
 if [ "$PROXY_CHECK_ENABLED" = "true" ]; then
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] 开始代理可用性检测（超时: ${PROXY_CHECK_TIMEOUT}s）..."
-  CHECK_PASS=0
-  CHECK_FAIL=0
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] 开始代理可用性检测（超时: ${PROXY_CHECK_TIMEOUT}s，并发: ${PROXY_CHECK_PARALLEL}）..."
+
+  # ── 单个代理检测函数（由子进程调用） ──────────────────────
+  # 使用 netrc 临时文件传递凭证，避免在 ps 命令行中暴露密码
+  check_single_proxy() {
+    LINE="$1"
+    INDEX="$2"
+    RESULT_FILE="/tmp/.proxy_check_${INDEX}.tmp"
+
+    P_HOST=$(echo "$LINE" | cut -d: -f1)
+    P_PORT=$(echo "$LINE" | cut -d: -f2)
+    P_USER=$(echo "$LINE" | cut -d: -f3)
+    P_PASS=$(echo "$LINE" | cut -d: -f4)
+
+    # 将凭证写入临时 netrc 文件，避免通过命令行暴露
+    NETRC_TMP="/tmp/.netrc_check_${INDEX}"
+    printf "machine %s\nlogin %s\npassword %s\n" "$P_HOST" "$P_USER" "$P_PASS" > "$NETRC_TMP"
+    chmod 600 "$NETRC_TMP"
+
+    if curl -sf \
+      --proxy "http://${P_HOST}:${P_PORT}" \
+      --proxy-user "" \
+      --netrc-file "$NETRC_TMP" \
+      --connect-timeout 5 \
+      --max-time "$PROXY_CHECK_TIMEOUT" \
+      -o /dev/null \
+      "$PROXY_CHECK_URL" 2>/dev/null; then
+      # 检测通过
+      echo "$LINE" > "$RESULT_FILE"
+    else
+      # 检测失败
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✗ 节点 #${INDEX} ${P_HOST}:${P_PORT} 连通性检测失败，已剔除。"
+      > "$RESULT_FILE"
+    fi
+
+    rm -f "$NETRC_TMP"
+  }
+
   CHECK_INDEX=0
+  JOB_COUNT=0
 
   while IFS= read -r LINE; do
     # 跳过空行
@@ -121,28 +163,33 @@ if [ "$PROXY_CHECK_ENABLED" = "true" ]; then
 
     CHECK_INDEX=$((CHECK_INDEX + 1))
 
-    # 解析字段：ip:port:username:password
-    P_HOST=$(echo "$LINE" | cut -d: -f1)
-    P_PORT=$(echo "$LINE" | cut -d: -f2)
-    P_USER=$(echo "$LINE" | cut -d: -f3)
-    P_PASS=$(echo "$LINE" | cut -d: -f4)
+    # 并行启动检测子进程
+    check_single_proxy "$LINE" "$CHECK_INDEX" &
+    JOB_COUNT=$((JOB_COUNT + 1))
 
-    # 使用 curl 通过该 HTTP 代理访问测试 URL
-    if curl -sf \
-      --proxy "http://${P_USER}:${P_PASS}@${P_HOST}:${P_PORT}" \
-      --connect-timeout 5 \
-      --max-time "$PROXY_CHECK_TIMEOUT" \
-      -o /dev/null \
-      "$PROXY_CHECK_URL" 2>/dev/null; then
-      # 检测通过，加入可用列表
-      echo "$LINE" >> "$TEMP_VALID"
-      CHECK_PASS=$((CHECK_PASS + 1))
-    else
-      # 检测失败，打印日志并跳过
-      CHECK_FAIL=$((CHECK_FAIL + 1))
-      echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✗ 节点 #${CHECK_INDEX} ${P_HOST}:${P_PORT} 连通性检测失败，已剔除。"
+    # 控制并发数，达到上限时等待任意一个子进程完成
+    if [ "$JOB_COUNT" -ge "$PROXY_CHECK_PARALLEL" ]; then
+      wait -n 2>/dev/null || wait
+      JOB_COUNT=$((JOB_COUNT - 1))
     fi
   done < "$TEMP_DEDUP"
+
+  # 等待所有子进程完成
+  wait
+
+  # 合并所有检测结果
+  CHECK_PASS=0
+  CHECK_FAIL=0
+  for i in $(seq 1 "$CHECK_INDEX"); do
+    RESULT_FILE="/tmp/.proxy_check_${i}.tmp"
+    if [ -s "$RESULT_FILE" ]; then
+      cat "$RESULT_FILE" >> "$TEMP_VALID"
+      CHECK_PASS=$((CHECK_PASS + 1))
+    else
+      CHECK_FAIL=$((CHECK_FAIL + 1))
+    fi
+    rm -f "$RESULT_FILE"
+  done
 
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] 检测完成: ${CHECK_PASS} 个通过，${CHECK_FAIL} 个失败（共 ${TOTAL_FETCHED} 个）。"
   CHECKED_COUNT=$CHECK_PASS
@@ -153,13 +200,17 @@ else
   CHECKED_COUNT=$TOTAL_FETCHED
 fi
 
-# ── 将可用代理解析为 JSON ──────────────────────────────────
-PROXIES_JSON=$(awk -F: '{
-  # 清除字段中的残留控制字符
-  for (i=1; i<=NF; i++) gsub(/[^[:print:]]/, "", $i)
-  if ($1 != "" && $2 != "")
-    printf "{\"proxy_address\":\"%s\",\"port\":%s,\"username\":\"%s\",\"password\":\"%s\",\"country_code\":\"'"${PROXY_COUNTRY}"'\"}\n", $1, $2, $3, $4
-}' "$TEMP_VALID" | jq -sc '.')
+# ── 将可用代理解析为 JSON（使用 jq 避免注入风险） ─────────────
+PROXIES_JSON=$(jq -R -s --arg country "$PROXY_COUNTRY" '
+  split("\n") | map(select(length > 0)) | map(split(":")) |
+  map(select(length >= 4) | {
+    proxy_address: .[0],
+    port: (.[1] | tonumber),
+    username: .[2],
+    password: .[3],
+    country_code: $country
+  })
+' "$TEMP_VALID")
 
 PROXY_COUNT=$(echo "$PROXIES_JSON" | jq 'length')
 
@@ -241,5 +292,4 @@ mv "$TMP_CONFIG" "$GOST_CONFIG"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ Gost 配置已写入 ${GOST_CONFIG}。"
 
-# ── 清理临时文件 ──────────────────────────────────────────
-rm -f "$TEMP_DEDUP" "$TEMP_VALID"
+# 注意：临时文件由 trap EXIT 自动清理，无需手动 rm

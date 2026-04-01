@@ -9,7 +9,7 @@ ARG GOST_VERSION=3.0.0
 ARG TARGETARCH=amd64
 
 # ── 安装系统依赖 ─────────────────────────────────────────────
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.6.14 /uv /usr/local/bin/uv
 RUN apk add --no-cache \
     curl \
     jq \
@@ -18,18 +18,15 @@ RUN apk add --no-cache \
     bash \
     ca-certificates \
     tzdata \
-    supervisor
+    supervisor \
+    procps
 
 # ── 设置时区 ─────────────────────────────────────────────────
 ENV TZ=Asia/Shanghai
 
 # ── 下载并安装 Gost V3 ───────────────────────────────────────
 RUN set -eux; \
-    ARCH="${TARGETARCH}"; \
-    if [ "$ARCH" = "arm64" ]; then ARCH="arm64"; \
-    elif [ "$ARCH" = "amd64" ]; then ARCH="amd64"; \
-    fi; \
-    GOST_URL="https://github.com/go-gost/gost/releases/download/v${GOST_VERSION}/gost_${GOST_VERSION}_linux_${ARCH}.tar.gz"; \
+    GOST_URL="https://github.com/go-gost/gost/releases/download/v${GOST_VERSION}/gost_${GOST_VERSION}_linux_${TARGETARCH}.tar.gz"; \
     curl -fsSL "$GOST_URL" -o /tmp/gost.tar.gz; \
     tar -xzf /tmp/gost.tar.gz -C /tmp; \
     mv /tmp/gost /usr/local/bin/gost; \
